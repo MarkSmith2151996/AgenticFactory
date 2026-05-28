@@ -1,0 +1,44 @@
+name: data-runner
+type: llm_agent
+project: fba-command-center
+task: |
+  Process the brand "{brand}" through the FBA data pipeline.
+
+  Keepa Product Finder URLs to download:
+  {keepa_urls}
+
+  Steps:
+  1. Call keepa_download with the URLs above to trigger the export
+  2. Call keepa_poll with the trigger_time and existing_files from step 1
+     - If status is "waiting", call keepa_poll again after a moment (retry up to 10 times)
+     - If status is "ready", proceed with the csv_path from new_files
+  3. For each CSV, call keepa_analyze to extract product metrics
+  4. Pass analysis results through scoring_engine for viability scores
+  5. Compile findings into the output schema
+
+  If keepa_poll never returns "ready" after 10 attempts, report the timeout in errors.
+input:
+  brand:
+    type: string
+    required: true
+    description: Brand name being processed
+  keepa_urls:
+    type: array
+    required: true
+    description: Keepa Product Finder URLs to download and analyze
+  dry_run:
+    type: boolean
+    required: false
+    description: If true, validate but don't write to DB
+output: DataRunnerResult
+tools:
+  - keepa_download
+  - keepa_poll
+  - keepa_analyze
+  - scoring_engine
+  - db_write
+toolbox: []
+model: qwen2.5:7b
+runtime:
+  provider: ollama
+  base_url: http://100.82.234.100:11434
