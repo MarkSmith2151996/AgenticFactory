@@ -1,0 +1,11 @@
+name: keepa-downloader
+type: service_agent
+project: fba
+service:
+  url_env: KEEPA_DOWNLOADER_URL
+  url_default: "http://anthonys-macbook-pro:8095"
+  endpoint: /download
+  timeout: 900
+input:
+  required: [urls]
+output: KeepaDownloadResult

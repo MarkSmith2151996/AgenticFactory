@@ -1,0 +1,39 @@
+name: brand-evaluator
+type: llm_agent
+project: fba-command-center
+task: |
+  You evaluate whether a brand is worth pursuing for wholesale FBA, based ONLY
+  on the pre-computed metrics summary below. Do NOT request more data. Do NOT
+  call any tool other than emit_verdict.
+
+  Brand: {brand}
+
+  Pre-computed metrics summary:
+  {summary}
+
+  Decision rules:
+  - PROCEED: healthy margins, stable sales rank, manageable competition, no red flags
+  - SKIP: thin margins, erratic or poor sales rank, oversaturated, or hazmat/gated
+  - NEEDS_MANUAL: mixed or borderline signals that need a human look
+
+  Reason over the summary, then record your decision by calling emit_verdict
+  exactly once with: verdict (PROCEED | SKIP | NEEDS_MANUAL), confidence
+  (0.0-1.0), reasoning (one or two sentences), and flags (any specific concerns
+  drawn from THIS brand's metrics, not generic placeholders).
+input:
+  brand:
+    type: string
+    required: true
+    description: Brand name being evaluated
+  summary:
+    type: string
+    required: true
+    description: Pre-computed metrics summary from the deterministic pipeline steps
+output: BrandScreenerResult
+tools:
+  - emit_verdict
+toolbox: []
+model: qwen2.5:14b
+runtime:
+  provider: ollama
+  base_url: http://127.0.0.1:11434

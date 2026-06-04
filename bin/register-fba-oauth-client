@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec python3 mcp/fba/register_oauth_client.py "$@"

@@ -1,0 +1,20 @@
+name: data-runner-test
+type: llm_agent
+project: fba-command-center
+
+task: |
+  Check if brand "{brand}" already has products in the database by querying
+  via db_read, then analyze the Keepa CSV at "{csv_path}".
+  1. Call db_read with db_path="/workspace/fba_shared.db" and query="SELECT COUNT(*) as count FROM products WHERE brand=?" and params=["{brand}"]
+  2. Call keepa_analyze with the csv_path
+  3. Report both results
+
+tools:
+  - keepa_analyze
+toolbox:
+  - db_read
+
+output: DataRunnerResult
+model: "openai:gpt-5.4"
+runtime:
+  base_url: "http://127.0.0.1:4096/v1"

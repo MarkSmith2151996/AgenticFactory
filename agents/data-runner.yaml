@@ -38,7 +38,7 @@ tools:
   - scoring_engine
   - db_write
 toolbox: []
-model: qwen2.5:7b
+model: qwen2.5:14b
 runtime:
   provider: ollama
-  base_url: http://100.82.234.100:11434
+  base_url: http://127.0.0.1:11434

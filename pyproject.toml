@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentic-factory"
+version = "0.1.0"
+description = "Local loopback runtime for declarative agent invocations."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "bcrypt>=4.1,<5.0",
+    "browser-use==0.11.13",
+    "fastapi>=0.111,<1.0",
+    "langchain-ollama>=1.1,<2.0",
+    "mcp>=1.27,<2.0",
+    "playwright>=1.60,<2.0",
+    "pydantic>=2.7,<3.0",
+    "pydantic-ai==1.97.0",
+    "PyYAML>=6.0,<7.0",
+    "starlette>=0.36,<2.0",
+    "uvicorn[standard]>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9.0",
+]
+
+[project.scripts]
+agentic-factory-serve = "agentic_factory.api:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that exercise integrated runtime boundaries with mocks",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentic_factory"]
