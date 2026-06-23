@@ -96,15 +96,49 @@ def _content_to_text(content: Any) -> str:
     if isinstance(content, list):
         out = []
         for part in content:
-            if isinstance(part, dict):
-                if part.get("type") in ("text", "input_text", "output_text"):
-                    out.append(part.get("text", ""))
-                elif part.get("type") == "image_url":
-                    out.append("[image omitted by proxy]")
+            if isinstance(part, dict) and part.get("type") in ("text", "input_text", "output_text"):
+                out.append(part.get("text", ""))
             elif isinstance(part, str):
                 out.append(part)
         return "".join(out)
     return str(content)
+
+
+def _content_to_response_parts(content: Any, role: str) -> list[dict[str, Any]]:
+    text_type = "output_text" if role == "assistant" else "input_text"
+    if content is None:
+        return []
+    if isinstance(content, str):
+        return [{"type": text_type, "text": content}] if content else []
+    if not isinstance(content, list):
+        text = str(content)
+        return [{"type": text_type, "text": text}] if text else []
+
+    parts: list[dict[str, Any]] = []
+    for part in content:
+        if isinstance(part, str):
+            if part:
+                parts.append({"type": text_type, "text": part})
+            continue
+        if not isinstance(part, dict):
+            continue
+
+        part_kind = part.get("type")
+        if part_kind in ("text", "input_text", "output_text"):
+            text = part.get("text", "")
+            if text:
+                parts.append({"type": text_type, "text": text})
+        elif role == "user" and part_kind == "image_url":
+            image_url = part.get("image_url")
+            if isinstance(image_url, dict):
+                image_url = image_url.get("url")
+            if image_url:
+                parts.append({"type": "input_image", "image_url": image_url})
+        elif role == "user" and part_kind == "input_image":
+            image_url = part.get("image_url") or part.get("image")
+            if image_url:
+                parts.append({"type": "input_image", "image_url": image_url})
+    return parts
 
 
 def _translate_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -119,12 +153,13 @@ def _translate_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[
             continue
         if role not in ("user", "assistant"):
             continue
-        part_type = "output_text" if role == "assistant" else "input_text"
-        input_items.append({
-            "type": "message",
-            "role": role,
-            "content": [{"type": part_type, "text": text}],
-        })
+        content_parts = _content_to_response_parts(msg.get("content"), role)
+        if content_parts:
+            input_items.append({
+                "type": "message",
+                "role": role,
+                "content": content_parts,
+            })
     instructions = "\n\n".join(p for p in instructions_parts if p) or "You are a helpful assistant."
     return instructions, input_items
 
