@@ -1,0 +1,7 @@
+{
+  "default_agent": "brand-evaluator",
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openai": {}
+  }
+}
