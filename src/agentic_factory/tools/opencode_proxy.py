@@ -141,6 +141,14 @@ def _content_to_response_parts(content: Any, role: str) -> list[dict[str, Any]]:
     return parts
 
 
+def _arguments_to_json(arguments: Any) -> str:
+    if isinstance(arguments, str):
+        return arguments
+    if arguments is None:
+        return "{}"
+    return json.dumps(arguments)
+
+
 def _translate_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     instructions_parts: list[str] = []
     input_items: list[dict[str, Any]] = []
@@ -151,6 +159,13 @@ def _translate_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[
             if text:
                 instructions_parts.append(text)
             continue
+        if role == "tool":
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": str(msg.get("tool_call_id") or "tool_call"),
+                "output": text,
+            })
+            continue
         if role not in ("user", "assistant"):
             continue
         content_parts = _content_to_response_parts(msg.get("content"), role)
@@ -160,8 +175,44 @@ def _translate_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[
                 "role": role,
                 "content": content_parts,
             })
+        for call in msg.get("tool_calls") or []:
+            function = call.get("function") or {}
+            input_items.append({
+                "type": "function_call",
+                "call_id": str(call.get("id") or function.get("name") or "tool_call"),
+                "name": str(function.get("name") or ""),
+                "arguments": _arguments_to_json(function.get("arguments")),
+            })
     instructions = "\n\n".join(p for p in instructions_parts if p) or "You are a helpful assistant."
     return instructions, input_items
+
+
+def _translate_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    if not tools:
+        return None
+    translated: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+            function = tool["function"]
+            translated.append({
+                "type": "function",
+                "name": function.get("name", ""),
+                "description": function.get("description", ""),
+                "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+            })
+        else:
+            translated.append(tool)
+    return translated
+
+
+def _translate_tool_choice(tool_choice: Any) -> Any:
+    if not isinstance(tool_choice, dict):
+        return tool_choice
+    if tool_choice.get("type") == "function" and isinstance(tool_choice.get("function"), dict):
+        return {"type": "function", "name": tool_choice["function"].get("name", "")}
+    return tool_choice
 
 
 def _translate_response_format(rf: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -196,7 +247,35 @@ def _build_codex_payload(req: dict[str, Any]) -> dict[str, Any]:
     text_block = _translate_response_format(req.get("response_format"))
     if text_block:
         payload["text"] = text_block
+    tools = _translate_tools(req.get("tools"))
+    if tools:
+        payload["tools"] = tools
+    if "tool_choice" in req:
+        payload["tool_choice"] = _translate_tool_choice(req.get("tool_choice"))
     return payload
+
+
+def _chat_tool_call(item: dict[str, Any]) -> dict[str, Any] | None:
+    if item.get("type") != "function_call":
+        return None
+    name = item.get("name")
+    if not name:
+        return None
+    arguments = item.get("arguments")
+    return {
+        "id": str(item.get("call_id") or item.get("id") or f"call_{uuid.uuid4().hex[:24]}"),
+        "type": "function",
+        "function": {"name": str(name), "arguments": _arguments_to_json(arguments)},
+    }
+
+
+def _append_tool_call(tool_calls: list[dict[str, Any]], item: dict[str, Any]) -> None:
+    call = _chat_tool_call(item)
+    if not call:
+        return
+    if any(existing.get("id") == call["id"] for existing in tool_calls):
+        return
+    tool_calls.append(call)
 
 
 async def _call_codex(payload: dict[str, Any], structured: bool = False) -> dict[str, Any]:
@@ -209,6 +288,7 @@ async def _call_codex(payload: dict[str, Any], structured: bool = False) -> dict
         "Accept": "text/event-stream",
     }
     text_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
     finish = "stop"
     usage: dict[str, Any] = {}
     response_id = ""
@@ -234,11 +314,21 @@ async def _call_codex(payload: dict[str, Any], structured: bool = False) -> dict
                 etype = evt.get("type", "")
                 if etype == "response.output_text.delta":
                     text_parts.append(evt.get("delta", ""))
+                elif etype == "response.output_item.done":
+                    item = evt.get("item") or {}
+                    if isinstance(item, dict):
+                        _append_tool_call(tool_calls, item)
                 elif etype == "response.completed":
                     r = evt.get("response", {})
                     response_id = r.get("id", response_id)
                     created_at = r.get("created_at", created_at)
                     model_returned = r.get("model", model_returned)
+                    for item in r.get("output") or []:
+                        if isinstance(item, dict):
+                            _append_tool_call(tool_calls, item)
+                    for call in r.get("tool_calls") or []:
+                        if isinstance(call, dict) and not any(existing.get("id") == call.get("id") for existing in tool_calls):
+                            tool_calls.append(call)
                     u = r.get("usage") or {}
                     usage = {
                         "prompt_tokens": u.get("input_tokens", 0),
@@ -256,8 +346,16 @@ async def _call_codex(payload: dict[str, Any], structured: bool = False) -> dict
 
     if error:
         raise HTTPException(status_code=502, detail=f"codex backend error: {error}")
-    if not text_parts:
+    if not text_parts and not tool_calls:
         raise HTTPException(status_code=502, detail="codex backend returned no text")
+    if tool_calls:
+        finish = "tool_calls"
+
+    message: dict[str, Any] = {"role": "assistant", "content": _final_content("".join(text_parts), structured)}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+        if not text_parts:
+            message["content"] = None
 
     return {
         "id": response_id or f"chatcmpl-{uuid.uuid4().hex[:24]}",
@@ -267,7 +365,7 @@ async def _call_codex(payload: dict[str, Any], structured: bool = False) -> dict
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": _final_content("".join(text_parts), structured)},
+                "message": message,
                 "finish_reason": finish,
             }
         ],
