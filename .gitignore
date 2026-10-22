@@ -8,3 +8,6 @@ __pycache__/
 venv/
 data/
 .env
+.opencode/agents/
+.secrets/
+*.env*
